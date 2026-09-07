@@ -8,7 +8,6 @@ use App\Services\InputParserService;
 use App\Services\FinanceQueryService;
 use App\Services\TelegramMessageService;
 use App\Services\TransactionService;
-use App\Services\WordPressSyncService;
 use App\Services\TelegramReplyService;
 
 class TelegramController extends Controller
@@ -19,7 +18,6 @@ class TelegramController extends Controller
         FinanceQueryService $financeQueryService,
         TelegramMessageService $telegramMessageService,
         TransactionService $transactionService,
-        WordPressSyncService $wordPressSyncService,
         TelegramReplyService $telegramReplyService
     ) {
 
@@ -28,10 +26,19 @@ class TelegramController extends Controller
         | Extract Telegram Data
         |--------------------------------------------------------------------------
         */
-
+        
         $telegramData =
             $telegramMessageService->extract($request);
 
+            if (!$telegramData['valid']) {
+    return response()->json([
+        'success' => true,
+        'message' => 'Unsupported Telegram update.'
+    ]);
+}
+
+            $updateId =
+            $telegramData['update_id'];
         $message =
             $telegramData['message'];
 
@@ -47,12 +54,25 @@ class TelegramController extends Controller
         |--------------------------------------------------------------------------
         */
 
-        $rawMessage =
-            $telegramMessageService->storeRawMessage(
-                $telegramUserId,
-                $chatId,
-                $message
-            );
+        $existingMessage = \App\Models\TelegramMessage::where(
+    'telegram_update_id',
+    $updateId
+)->first();
+
+if ($existingMessage) {
+    return response()->json([
+        'success' => true,
+        'message' => 'Update already processed.'
+    ]);
+}
+
+$rawMessage =
+    $telegramMessageService->storeRawMessage(
+        $updateId,
+        $telegramUserId,
+        $chatId,
+        $message
+    );
 
         /*
         |--------------------------------------------------------------------------
@@ -101,12 +121,6 @@ class TelegramController extends Controller
                 $telegramUserId,
                 $message
             );
-
-            $wordPressSyncService->sync(
-                $parsed,
-                $telegramUserId,
-                $message
-            );
         }
 
         /*
@@ -135,23 +149,57 @@ class TelegramController extends Controller
                 );
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Telegram Reply
-        |--------------------------------------------------------------------------
-        */
+       /**
+ * |--------------------------------------------------------------------------
+ * | Telegram Reply
+ * |--------------------------------------------------------------------------
+ */
 
-        $textReply =
-            $queryReply
-            ?? json_encode($parsed, JSON_PRETTY_PRINT);
+$textReply = null;
 
-        $telegramReplyService->send(
-            $chatId,
-            $textReply
-        );
+if (
+    in_array(
+        $parsed['intent'],
+        ['add_income', 'add_expense']
+    )
+) {
+    $type =
+        $parsed['intent'] === 'add_income'
+            ? 'Income'
+            : 'Expense';
 
-        return response()->json([
-            'success' => true
-        ]);
+    $emoji =
+        $parsed['intent'] === 'add_income'
+            ? '💰'
+            : '💸';
+
+    $amount =
+        number_format($parsed['amount'] ?? 0);
+
+    $category =
+        ucfirst($parsed['category'] ?? 'general');
+
+    $date =
+        $parsed['transaction_date']
+        ?? now()->toDateString();
+
+    $textReply =
+        "✅ {$type} added successfully!\n"
+        . "{$emoji} {$amount} BDT — {$category}\n"
+        . "📅 {$date}";
+}
+
+if ($queryReply !== null) {
+    $textReply = $queryReply;
+}
+
+$telegramReplyService->send(
+    $chatId,
+    $textReply
+);
+
+return response()->json([
+    'success' => true
+]);
     }
 }

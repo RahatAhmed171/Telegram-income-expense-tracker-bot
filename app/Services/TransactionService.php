@@ -32,7 +32,7 @@ class TransactionService
             $parsed['note'] ?? $message,
 
         'transaction_date' =>
-            $parsed['transaction_date'] ?? now()
+            $parsed['transaction_date'] ?? now()->toDateString()
     ]);
 }
 }
